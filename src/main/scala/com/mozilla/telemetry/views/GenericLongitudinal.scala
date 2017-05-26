@@ -63,6 +63,10 @@ object GenericLongitudinalView {
       "num-parquet-files",
       descr = "Number of parquet files to output. Defaults to the number of input files",
       required = false)
+    val partitions = opt[List[String]](
+      "partitions",
+      descr = "List of partitions in the format <col_name>=<value>, e.g. app_name=Fennec",
+      required = false)
     val version = opt[String](
       "version",
       descr = "The version for the output. Defaults to v<from><to>",
@@ -109,12 +113,17 @@ object GenericLongitudinalView {
       case _ => s"v$from$to"
     }
 
+    val partitions = opts.partitions.get match {
+      case Some(p) => "/" + p.mkString("/")
+      case _ => ""
+    }
+
     val outputPath = opts.outputPath()
 
     run(sqlContext, opts)
       .repartition(numParquetFiles)
       .write
-      .parquet(s"s3://$outputPath/$version")
+      .parquet(s"s3://$outputPath/$version$partitions")
 
     sc.stop()
   }
