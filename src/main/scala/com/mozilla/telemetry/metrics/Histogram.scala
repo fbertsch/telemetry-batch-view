@@ -15,6 +15,7 @@ case class CountHistogram(keyed: Boolean, originalName: String, process: Option[
 case class EnumeratedHistogram(keyed: Boolean, originalName: String, nValues: Int, process: Option[String] = None) extends HistogramDefinition
 case class LinearHistogram(keyed: Boolean, originalName: String, low: Int, high: Int, nBuckets: Int, process: Option[String] = None) extends HistogramDefinition
 case class ExponentialHistogram(keyed: Boolean, originalName: String, low: Int, high: Int, nBuckets: Int, process: Option[String] = None) extends HistogramDefinition
+case class CategoricalHistogram(keyed: Boolean, originalName: String, labels: Seq[String], process: Option[String] = None) extends HistogramDefinition
 
 class HistogramsClass extends MetricsClass {
   def HistogramPrefix = "histogram"
@@ -160,6 +161,7 @@ class HistogramsClass extends MetricsClass {
             case d: EnumeratedHistogram => d.copy(process=Some(process))
             case d: LinearHistogram => d.copy(process=Some(process))
             case d: ExponentialHistogram => d.copy(process=Some(process))
+            case d: CategoricalHistogram => d.copy(processes=Some(process))
           }))
         }
 
@@ -176,6 +178,8 @@ class HistogramsClass extends MetricsClass {
             Some(addProcesses(k, LinearHistogram(keyed, k, low, h, n)))
           case ("exponential", _, Some(h), Some(n)) =>
             Some(addProcesses(k, ExponentialHistogram(keyed, k, low, h, n)))
+          case ("categorical", _, _, _) =>
+            Some(addProcesses(k, CategoricalHistogram(keyed, k)))
           case _ =>
             None
         }
