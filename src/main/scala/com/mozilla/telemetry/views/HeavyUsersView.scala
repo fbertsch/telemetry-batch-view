@@ -5,6 +5,7 @@ import java.lang.Long
 import com.github.nscala_time.time.Imports._
 import com.mozilla.telemetry.utils.deletePrefix
 import com.mozilla.telemetry.utils.CustomPartitioners._
+import com.mozilla.telemetry.utils.ConsistentPartitioner.getPartitionRange
 import org.apache.spark.sql.{Dataset, Encoders, SparkSession}
 import org.apache.spark.sql.expressions.scalalang.typed.sumLong
 import org.apache.spark.sql.functions.{col, min}
@@ -28,7 +29,8 @@ object HeavyUsersView {
   val DatasetPrefix = "heavy_users"
   val DefaultMainSummaryBucket = "telemetry-parquet"
   val Version = "v1"
-  val NumFiles = 10 // ~3.5GB in total, per day
+  val NumFiles = 16 // ~3.5GB in total, per day
+  val NumInternalPartitions = 160
   val WriteMode = "overwrite"
   val SubmissionDatePartitionName = "submission_date_s3"
   val TimeWindow = 28.days
@@ -180,17 +182,18 @@ object HeavyUsersView {
     HeavyUsersRow(date, r.client_id, r.sample_id, r.profile_creation_date, r.active_ticks, r.active_ticks_period, heavyUser, prevYearHeavyUser)
   }
 
-  /*
-   * Aggregate a new day of data.
-   *
-   * @param ds Dataset of raw `main_summary` data
-   * @param existingData Dataset of the existing `heavy_users` data
-   * @param cutoffs A Map of dates and their q90 for `active_ticks`
-   * @param date The String date to run on
-   */
-  def aggregate(ds: Dataset[MainSummaryRow], existingData: Dataset[HeavyUsersRow], cutoffs: Map[String, Double], date: String):
-               (Dataset[HeavyUsersRow], Option[Double]) = {
+  def aggregatePartition(partition: Int, ds: Dataset[MainSummaryRow], existingData: Dataset[HeavyUsersRow], cutoffs: Map[String, Double], date: String):
+                        Dataset[UserActiveTicks] = {
     import ds.sparkSession.implicits._
+
+    // Prune sample_ids for this partition
+    val (beginHash, endHash) = getPartitionRange(NumFiles, partition)
+    val beginSampleId = (100 * beginHash.toInt) + 1
+    val endSampleId = (100 * endHash.toInt)
+    val sampleIds = (beginSampleId to endSampleId).map(_.toString)
+
+    val filteredDs = ds.filter{ r => sampleIds contains r.sample_id }
+    val filteredExistingData = existingData.filter{ r => (r.sample_id >= beginSampleId) && (r.sample_id <= endSampleId) }
 
     // Get cutoffs
     val datetime = fmt.parseDateTime(date)
@@ -200,13 +203,14 @@ object HeavyUsersView {
     val prevDay = fmt.print(datetime - 1.days)
     val subtractDay = fmt.print(datetime - TimeWindow)
 
-    val prevData: Dataset[HeavyUsersRow] = existingData
+    val prevData: Dataset[HeavyUsersRow] = filteredExistingData
       .filter(_.submission_date_s3 == prevDay)
-    val subtractData: Dataset[HeavyUsersRow] = existingData
+
+    val subtractData: Dataset[HeavyUsersRow] = filteredExistingData 
       .filter(_.submission_date_s3 == subtractDay)
 
     // Aggregate today's main_summary data
-    val aggregated: Dataset[UserActiveTicks] = ds
+    val aggregated: Dataset[UserActiveTicks] = filteredDs
       .filter(r => r.submission_date_s3 == date && Option(r.active_ticks).getOrElse(0: Long) > 0)
       .groupByKey(r => (r.client_id, r.sample_id, r.profile_creation_date))
       .agg(sumLong[MainSummaryRow](_.active_ticks))
@@ -220,19 +224,37 @@ object HeavyUsersView {
       .as[UserActiveTicks]
 
     // Subtract 28 days ago's active_ticks
-    val current: Dataset[UserActiveTicks] = added
+    added
       .joinWith(subtractData, (added("client_id") === subtractData("client_id")) && (added("sample_id") === subtractData("sample_id")), "left_outer")
       .map(subtractHeavyUserFromActiveTicks)
       .as[UserActiveTicks]
       .filter(_.active_ticks_period > 0)
-      .cache()
+  }
+
+  /*
+   * Aggregate a new day of data.
+   *
+   * @param ds Dataset of raw `main_summary` data
+   * @param existingData Dataset of the existing `heavy_users` data
+   * @param cutoffs A Map of dates and their q90 for `active_ticks`
+   * @param date The String date to run on
+   */
+  def aggregate(ds: Dataset[MainSummaryRow], existingData: Dataset[HeavyUsersRow], cutoffs: Map[String, Double], date: String):
+               (Dataset[HeavyUsersRow], Option[Double]) = {
+    import ds.sparkSession.implicits._
+
+    val aggregatedPartitions = (0 until NumFiles).map(aggregatePartition(_, ds, existingData, cutoffs, date))
+    val aggregated = aggregatedPartitions.tail.foldLeft(aggregatedPartitions.head)(_.union(_))
+    aggregated.cache()
 
     // This is a bootstrap date if we don't have 28 days of data
+    val datetime = fmt.parseDateTime(date)
+    val prevYear = datetime - 1.years
     val bootstrap = getShouldBootstrap(existingData, datetime)
-    val cutoff = getCutoff(current, bootstrap)
+    val cutoff = getCutoff(aggregated, bootstrap)
     val prevYearCutoff = getCutoff(prevYear, cutoffs)
 
-    val withCutoffs = current
+    val withCutoffs = aggregated
       .map(addCutoffs(date, bootstrap, cutoff, prevYearCutoff))
       .as[HeavyUsersRow]
 
@@ -266,6 +288,7 @@ object HeavyUsersView {
     val spark = SparkSession
       .builder()
       .appName(s"$DatasetPrefix $Version Job")
+      .config("spark.sql.shuffle.partitions", (NumInternalPartitions / NumFiles).toInt)
       .getOrCreate()
 
     import spark.implicits._

@@ -86,6 +86,15 @@ object ConsistentPartitioner {
     (0 to (numPartitions - 1)).map(getValue _).sorted
   }
 
+  def getPartitionRanges(numPartitions: Int): Map[Int, (Double, Double)] = {
+    val ring = getPartitionRing(numPartitions)
+    ring.zip(0.0 +: ring.dropRight(1)).zipWithIndex.map{ case((e, b), i) => (i, (b, e)) }.toMap
+  }
+
+  def getPartitionRange(numPartitions: Int, partition: Int): (Double, Double) = {
+    getPartitionRanges(numPartitions)(partition)
+  }
+
   /*
    * Given a sorted list of partition values in [0, 1], return a function
    * that takes a sample value and outputs the partition that sample belongs in.
