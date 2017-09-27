@@ -29,7 +29,7 @@ object HeavyUsersView {
   val DatasetPrefix = "heavy_users"
   val DefaultMainSummaryBucket = "telemetry-parquet"
   val Version = "v1"
-  val NumFiles = 16 // ~3.5GB in total, per day
+  val NumFiles = 32 // ~3.5GB in total, per day
   val NumInternalPartitions = 160
   val WriteMode = "overwrite"
   val SubmissionDatePartitionName = "submission_date_s3"
@@ -188,12 +188,15 @@ object HeavyUsersView {
 
     // Prune sample_ids for this partition
     val (beginHash, endHash) = getPartitionRange(NumFiles, partition)
-    val beginSampleId = (100 * beginHash.toInt) + 1
-    val endSampleId = (100 * endHash.toInt)
+    val beginSampleId = (100 * beginHash).toInt + 1
+    val endSampleId = (100 * endHash).toInt
     val sampleIds = (beginSampleId to endSampleId).map(_.toString)
 
-    val filteredDs = ds.filter{ r => sampleIds contains r.sample_id }
-    val filteredExistingData = existingData.filter{ r => (r.sample_id >= beginSampleId) && (r.sample_id <= endSampleId) }
+    val stringWhere = sampleIds.map{ sid => s"""(sample_id = "$sid")""" }.mkString(" OR ")
+    val intWhere = sampleIds.map{ sid => s"""(sample_id = $sid)""" }.mkString(" OR ")
+
+    val filteredDs = ds.where(stringWhere)
+    val filteredExistingData = existingData.where(intWhere)
 
     // Get cutoffs
     val datetime = fmt.parseDateTime(date)
@@ -223,12 +226,17 @@ object HeavyUsersView {
       .map(addActiveTicksToHeavyUserRow)
       .as[UserActiveTicks]
 
+    added.write.mode("overwrite").parquet(s"s3://telemetry-test-bucket/frank/heavy_users_partitions/type=added/partition=$partition")
+
     // Subtract 28 days ago's active_ticks
-    added
+    val finaldf = added
       .joinWith(subtractData, (added("client_id") === subtractData("client_id")) && (added("sample_id") === subtractData("sample_id")), "left_outer")
       .map(subtractHeavyUserFromActiveTicks)
       .as[UserActiveTicks]
       .filter(_.active_ticks_period > 0)
+
+    finaldf.write.mode("overwrite").parquet(s"s3://telemetry-test-bucket/frank/heavy_users_partitions/type=final/partition=$partition")
+    finaldf
   }
 
   /*
