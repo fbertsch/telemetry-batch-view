@@ -54,6 +54,12 @@ assemblyMergeStrategy in assembly := {
   case x => MergeStrategy.first
 }
 
+// Shade PB files
+assemblyShadeRules in assembly := Seq(
+  ShadeRule.rename("com.google.protobuf.**" -> "shadeproto.@1").inAll,
+  ShadeRule.rename("com.trueaccord.scalapb.**" -> "shadescalapb.@1").inAll
+)
+
 // Disable parallel execution to avoid multiple SparkContexts
 parallelExecution in Test := false
 logBuffered in Test := false
