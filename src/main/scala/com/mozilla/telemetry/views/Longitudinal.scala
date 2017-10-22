@@ -176,6 +176,9 @@ object LongitudinalView {
     lockfile.createNewFile()
     S3Store.uploadFile(lockfile, outputBucket, prefix, lockfileName)
 
+    //bug 1404715 - remove previous data for this run
+    deletePrefix(bucket, prefix)
+
     // Sort submissions in descending order
     implicit val ordering = Ordering[(String, String, Int)].reverse
     val clientMessages = messages
