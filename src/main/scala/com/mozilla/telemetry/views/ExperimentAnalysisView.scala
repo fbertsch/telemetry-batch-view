@@ -68,26 +68,26 @@ object ExperimentAnalysisView {
     logger.info(s"Starting $jobName for date $date")
 
     val experiments = getExperiments(conf, experimentData)
-    sparkSession.stop()
 
     logger.info(s"List of experiments to process for $date is: $experiments")
 
     experiments.foreach{ e: String =>
       logger.info(s"Aggregating pings for experiment $e")
 
-      val spark = getSpark
+      val spark = sparkSession 
 
       val experimentsSummary = spark.read.option("mergeSchema", "true").parquet(conf.inputLocation())
         .where(col("experiment_id") === e)
 
-      val minDate = experimentsSummary
-        .agg(min("submission_date_s3"))
-        .first.getAs[String](0)
+      //val minDate = experimentsSummary
+      //  .agg(min("submission_date_s3"))
+      //  .first.getAs[String](0)
 
-      val errorAggregates = Try(spark.read.parquet(s"s3://${conf.errorAggregatesBucket()}/$errorAggregatesPath")) match {
-        case Success(df) => df.where(col("experiment_id") === e && col("submission_date") >= minDate)
-        case Failure(_) => spark.emptyDataFrame
-      }
+      //val errorAggregates = Try(spark.read.parquet(s"s3://${conf.errorAggregatesBucket()}/$errorAggregatesPath")) match {
+      //  case Success(df) => df.where(col("experiment_id") === e && col("submission_date") >= minDate)
+      //  case Failure(_) => spark.emptyDataFrame
+      //}
+      val errorAggregates = spark.emptyDataFrame
 
       val outputLocation = s"${conf.outputLocation()}/experiment_id=$e/date=$date"
 
@@ -99,7 +99,6 @@ object ExperimentAnalysisView {
         .write.mode("overwrite").parquet(outputLocation)
 
       logger.info(s"Wrote aggregates to $outputLocation")
-      spark.stop()
     }
   }
 

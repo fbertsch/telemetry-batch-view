@@ -244,11 +244,15 @@ object HeavyUsersView {
 
   def senseExistingData(existingData: Dataset[HeavyUsersRow], date: String, firstRun: Boolean): Unit = {
     if(!firstRun) {
-      val lastDateRow = existingData.select(max(col("submission_date_s3"))).collect()
-      val lastDate = fmt.parseDateTime(lastDateRow(0).getString(0))
-      if((lastDate + 1.days) != fmt.parseDateTime(date)){
-        throw new java.lang.IllegalStateException("Missing previous day's heavy_users data")
-      }
+      val lastDateRow = existingData.select(col("submission_date_s3")).distinct().collect()
+      val dates = lastDateRow.map(r => fmt.parseDateTime(r.getString(0)))
+      println("Existing Dates")
+      println(dates)
+      println("Looking For")
+      println(date)
+      //if((lastDate + 1.days) != fmt.parseDateTime(date)){
+      //  throw new java.lang.IllegalStateException("Missing previous day's heavy_users data")
+      //}
     }
   }
 
@@ -323,7 +327,5 @@ object HeavyUsersView {
       .write
       .mode(WriteMode)
       .parquet(s"s3://${conf.bucket()}/$DatasetPrefix/$Version/$SubmissionDatePartitionName=$date")
-
-    spark.stop()
   }
 }
