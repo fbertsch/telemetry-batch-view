@@ -55,7 +55,7 @@ package object utils{
 
   def getOrCreateSparkSession(jobName: String): SparkSession = {
     val conf = new SparkConf().setAppName(jobName)
-    conf.setMaster(conf.get("spark.master", "local[*]"))
+    //conf.setMaster(conf.get("spark.master", "local[*]"))
 
     val spark = SparkSession
       .builder()
