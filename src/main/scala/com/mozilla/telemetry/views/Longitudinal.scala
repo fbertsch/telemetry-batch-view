@@ -141,6 +141,7 @@ object LongitudinalView {
     val spark = getOrCreateSparkSession(jobName)
     implicit val sc = spark.sparkContext
 
+    val numPartitions = sc.defaultParallelism
     val messages = Dataset(telemetrySource)
       .where("sourceName") {
         case "telemetry" => true
@@ -154,7 +155,7 @@ object LongitudinalView {
         case sample if samples.contains(sample) => true
       }.where("appUpdateChannel") {
         case channel if channels.map(_.contains(channel)).getOrElse(true) => true
-      }
+      }.records(minPartitions = Some(numPartitions))
 
     run(opts: Opts, messages, sc.defaultParallelism)
     sc.stop()
